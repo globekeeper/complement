@@ -83,6 +83,7 @@ func TestFetchEvent(t *testing.T) {
 // history_visibility: joined
 // sytest: /event/ does not allow access to events before the user joined
 func TestFetchHistoricalJoinedEventDenied(t *testing.T) {
+	runtime.SkipIf(t, runtime.Dendrite)
 	deployment := Deploy(t, b.BlueprintOneToOneRoom)
 	defer deployment.Destroy(t)
 
@@ -207,6 +208,7 @@ func TestFetchHistoricalInvitedEventFromBetweenInvite(t *testing.T) {
 // Tries to fetch an event before being invited, and fails.
 // history_visibility: invited
 func TestFetchHistoricalInvitedEventFromBeforeInvite(t *testing.T) {
+	runtime.SkipIf(t, runtime.Dendrite)
 	deployment := Deploy(t, b.BlueprintOneToOneRoom)
 	defer deployment.Destroy(t)
 
