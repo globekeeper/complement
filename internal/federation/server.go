@@ -20,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matrix-org/gomatrix"
+
 	"github.com/gorilla/mux"
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/matrix-org/util"
@@ -67,7 +69,7 @@ func NewServer(t *testing.T, deployment *docker.Deployment, opts ...func(*Server
 		mux:   mux.NewRouter(),
 		// The server name will be updated when the caller calls Listen() to include the port number
 		// of the HTTP server e.g "host.docker.internal:56353"
-		serverName:                  docker.HostnameRunningComplement,
+		serverName:                  deployment.Config.HostnameRunningComplement,
 		rooms:                       make(map[string]*ServerRoom),
 		aliases:                     make(map[string]string),
 		UnexpectedRequestsAreErrors: true,
@@ -213,7 +215,13 @@ func (s *Server) MustSendTransaction(t *testing.T, deployment *docker.Deployment
 // SendFederationRequest signs and sends an arbitrary federation request from this server.
 //
 // The requests will be routed according to the deployment map in `deployment`.
-func (s *Server) SendFederationRequest(ctx context.Context, deployment *docker.Deployment, req gomatrixserverlib.FederationRequest, resBody interface{}) error {
+func (s *Server) SendFederationRequest(
+	ctx context.Context,
+	t *testing.T,
+	deployment *docker.Deployment,
+	req gomatrixserverlib.FederationRequest,
+	resBody interface{},
+) error {
 	if err := req.Sign(gomatrixserverlib.ServerName(s.serverName), s.KeyID, s.Priv); err != nil {
 		return err
 	}
@@ -224,7 +232,15 @@ func (s *Server) SendFederationRequest(ctx context.Context, deployment *docker.D
 	}
 
 	httpClient := gomatrixserverlib.NewClient(gomatrixserverlib.WithTransport(&docker.RoundTripper{Deployment: deployment}))
-	return httpClient.DoRequestAndParseResponse(ctx, httpReq, resBody)
+	start := time.Now()
+	err = httpClient.DoRequestAndParseResponse(ctx, httpReq, resBody)
+
+	if httpError, ok := err.(gomatrix.HTTPError); ok {
+		t.Logf("[SSAPI] %s %s%s => error(%d): %s (%s)", req.Method(), req.Destination(), req.RequestURI(), httpError.Code, err, time.Since(start))
+	} else if err == nil {
+		t.Logf("[SSAPI] %s %s%s => 2xx (%s)", req.Method(), req.Destination(), req.RequestURI(), time.Since(start))
+	}
+	return err
 }
 
 // MustCreateEvent will create and sign a new latest event for the given room.
@@ -460,10 +476,10 @@ func federationServer(cfg *config.Complement, h http.Handler) (*http.Server, str
 			Locality:      []string{"London"},
 			StreetAddress: []string{"123 Street"},
 			PostalCode:    []string{"12345"},
-			CommonName:    docker.HostnameRunningComplement,
+			CommonName:    cfg.HostnameRunningComplement,
 		},
 	}
-	host := docker.HostnameRunningComplement
+	host := cfg.HostnameRunningComplement
 	if ip := net.ParseIP(host); ip != nil {
 		template.IPAddresses = append(template.IPAddresses, ip)
 	} else {
