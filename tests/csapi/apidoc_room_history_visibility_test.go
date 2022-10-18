@@ -10,7 +10,6 @@ import (
 	"github.com/matrix-org/complement/internal/client"
 	"github.com/matrix-org/complement/internal/match"
 	"github.com/matrix-org/complement/internal/must"
-	"github.com/matrix-org/complement/runtime"
 )
 
 // TODO most of this can be refactored into data-driven tests
@@ -113,8 +112,6 @@ func TestFetchHistoricalJoinedEventDenied(t *testing.T) {
 // Tries to fetch an event before join, and succeeds.
 // history_visibility: shared
 func TestFetchHistoricalSharedEvent(t *testing.T) {
-	runtime.SkipIf(t, runtime.Dendrite) // FIXME https://github.com/matrix-org/dendrite/issues/617
-
 	deployment := Deploy(t, b.BlueprintOneToOneRoom)
 	defer deployment.Destroy(t)
 
@@ -159,8 +156,6 @@ func TestFetchHistoricalSharedEvent(t *testing.T) {
 // Tries to fetch an event between being invited and joined, and succeeds.
 // history_visibility: invited
 func TestFetchHistoricalInvitedEventFromBetweenInvite(t *testing.T) {
-	runtime.SkipIf(t, runtime.Dendrite) // FIXME https://github.com/matrix-org/dendrite/issues/617
-
 	deployment := Deploy(t, b.BlueprintOneToOneRoom)
 	defer deployment.Destroy(t)
 
@@ -268,8 +263,6 @@ func TestFetchEventNonWorldReadable(t *testing.T) {
 // Tries to fetch an event without having joined, and succeeds.
 // history_visibility: world_readable
 func TestFetchEventWorldReadable(t *testing.T) {
-	runtime.SkipIf(t, runtime.Dendrite) // FIXME https://github.com/matrix-org/dendrite/issues/617
-
 	deployment := Deploy(t, b.BlueprintOneToOneRoom)
 	defer deployment.Destroy(t)
 
