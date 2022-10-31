@@ -33,6 +33,7 @@ var KnownBlueprints = map[string]*Blueprint{
 	BlueprintPerfManyMessages.Name:            &BlueprintPerfManyMessages,
 	BlueprintPerfManyRooms.Name:               &BlueprintPerfManyRooms,
 	BlueprintPerfE2EERoom.Name:                &BlueprintPerfE2EERoom,
+	BlueprintMultiRoom.Name:                   &BlueprintMultiRoom,
 }
 
 // Blueprint represents an entire deployment to make.
