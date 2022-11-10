@@ -8,7 +8,7 @@ import (
 	"github.com/matrix-org/complement/internal/client"
 )
 
-var dataType = "connect.mrd.location"
+var dataType = "connect.multiroom.location"
 var dataMrd = &client.FakeMrd{Foo: "bar"}
 
 func TestMultiRoom(t *testing.T) {
