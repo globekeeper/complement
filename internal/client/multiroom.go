@@ -16,7 +16,7 @@ type FakeMrd struct {
 func (c *CSAPI) SendMultiRoom(t *testing.T, dataType string, data interface{}) {
 	t.Helper()
 	paths := []string{"_matrix", "client", "v3", "multiroom", dataType}
-	c.MustDo(t, "POST", paths, data)
+	c.MustDoFunc(t, "POST", paths, WithJSONBody(t, data))
 }
 
 func (c *CSAPI) SendMultiRoomVisibility(t *testing.T, dataType string, roomId string, expire time.Time) {
