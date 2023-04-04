@@ -49,7 +49,7 @@ func SyncMultiRoom(userID, dataType string, data *FakeMrd) SyncCheckOpt {
 		if !mrContent.Exists() {
 			return fmt.Errorf("key %s does not exist, sync body: %s", keyContent, topLevelSyncJSON.Raw)
 		}
-		keyTimestamp := key + ".timestamp"
+		keyTimestamp := key + ".origin_server_ts"
 		mrTimestamp := topLevelSyncJSON.Get(keyTimestamp)
 		if !mrTimestamp.Exists() {
 			return fmt.Errorf("key %s does not exist, sync body: %s", keyTimestamp, topLevelSyncJSON.Raw)
