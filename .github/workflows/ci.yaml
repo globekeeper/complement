@@ -39,15 +39,9 @@ jobs:
     name: Complement (${{ matrix.homeserver }})
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false # ensure if synapse fails we keep running dendrite and vice-versa
+      fail-fast: false
       matrix:
         include:
-          - homeserver: Synapse
-            tags: synapse_blacklist
-            packages: ./tests/msc3874 ./tests/msc3902
-            env: "COMPLEMENT_ENABLE_DIRTY_RUNS=1 COMPLEMENT_SHARE_ENV_PREFIX=PASS_ PASS_SYNAPSE_COMPLEMENT_DATABASE=sqlite"
-            timeout: 20m
-
           - homeserver: Dendrite
             tags: dendrite_blacklist
             packages: ""
@@ -99,16 +93,6 @@ jobs:
           done
 
       # Build homeserver image
-
-        # Build the base Synapse dockerfile and then build a Complement-specific image from that base.
-      - run: |
-          docker build -t matrixdotorg/synapse:latest -f docker/Dockerfile .
-          docker build -t matrixdotorg/synapse-workers:latest -f docker/Dockerfile-workers .
-          docker build -t homeserver -f docker/complement/Dockerfile docker/complement
-        if: ${{ matrix.homeserver == 'Synapse' }}
-        working-directory: homeserver
-        env:
-          DOCKER_BUILDKIT: 1
 
         # Build the Complement-specific dendrite image from the dockerfile in the Dendrite repo.
         # We don't use the dockerfiles in the Complement repo as they tend to get stale quickly.
