@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"image/jpeg"
 	"image/png"
-	"io/ioutil"
+	"io"
 	"net/url"
 	"strings"
 	"testing"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
 	"github.com/matrix-org/complement/internal/data"
 )
 
@@ -18,10 +19,10 @@ import (
 
 // sytest: POSTed media can be thumbnailed
 func TestLocalPngThumbnail(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	fileName := "test.png"
 	contentType := "image/png"
@@ -33,11 +34,11 @@ func TestLocalPngThumbnail(t *testing.T) {
 
 // sytest: Remote media can be thumbnailed
 func TestRemotePngThumbnail(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintFederationOneToOneRoom)
+	deployment := complement.Deploy(t, 2)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs2", "@bob:hs2")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs2", helpers.RegistrationOpts{})
 
 	fileName := "test.png"
 	contentType := "image/png"
@@ -52,7 +53,7 @@ func fetchAndValidateThumbnail(t *testing.T, c *client.CSAPI, mxcUri string) {
 
 	origin, mediaId := client.SplitMxc(mxcUri)
 
-	res := c.MustDoFunc(t, "GET", []string{"_matrix", "media", "v3", "thumbnail", origin, mediaId}, client.WithQueries(url.Values{
+	res := c.MustDo(t, "GET", []string{"_matrix", "media", "v3", "thumbnail", origin, mediaId}, client.WithQueries(url.Values{
 		"width":  []string{"32"},
 		"height": []string{"32"},
 		"method": []string{"scale"},
@@ -62,7 +63,7 @@ func fetchAndValidateThumbnail(t *testing.T, c *client.CSAPI, mxcUri string) {
 		t.Fatalf("thumbnail request for uploaded file failed")
 	}
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 
 	if err != nil {
 		t.Fatalf("thumbnail request for uploaded file failed: %s", err)

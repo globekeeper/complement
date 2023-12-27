@@ -1,28 +1,24 @@
 package csapi_tests
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
-func doCreateRoom(t *testing.T, c *client.CSAPI, json map[string]interface{}, match match.HTTPResponse) {
-	res := c.DoFunc(t, "POST", []string{"_matrix", "client", "v3", "createRoom"}, client.WithJSONBody(t, json))
-	must.MatchResponse(t, res, match)
-}
-
 func TestRoomCreate(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	t.Run("Parallel", func(t *testing.T) {
 		// sytest: POST /createRoom makes a public room
@@ -30,13 +26,13 @@ func TestRoomCreate(t *testing.T) {
 			t.Parallel()
 			roomAlias := "30-room-create-alias-random"
 
-			doCreateRoom(t, alice, map[string]interface{}{
+			res := alice.CreateRoom(t, map[string]interface{}{
 				"visibility":      "public",
 				"room_alias_name": roomAlias,
-			}, match.HTTPResponse{
+			})
+			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
-					match.JSONKeyEqual("room_alias", fmt.Sprintf("#%s:hs1", roomAlias)),
 					match.JSONKeyTypeEqual("room_id", gjson.String),
 				},
 			})
@@ -45,9 +41,10 @@ func TestRoomCreate(t *testing.T) {
 		t.Run("POST /createRoom makes a private room", func(t *testing.T) {
 			t.Parallel()
 
-			doCreateRoom(t, alice, map[string]interface{}{
+			res := alice.CreateRoom(t, map[string]interface{}{
 				"visibility": "private",
-			}, match.HTTPResponse{
+			})
+			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
 					match.JSONKeyTypeEqual("room_id", gjson.String),
@@ -58,11 +55,11 @@ func TestRoomCreate(t *testing.T) {
 		t.Run("POST /createRoom makes a room with a topic", func(t *testing.T) {
 			t.Parallel()
 
-			roomID := alice.CreateRoom(t, map[string]interface{}{
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{
 				"topic":  "Test Room",
 				"preset": "public_chat",
 			})
-			res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.topic"})
+			res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.topic"})
 			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
@@ -73,11 +70,11 @@ func TestRoomCreate(t *testing.T) {
 		// sytest: POST /createRoom makes a room with a name
 		t.Run("POST /createRoom makes a room with a name", func(t *testing.T) {
 			t.Parallel()
-			roomID := alice.CreateRoom(t, map[string]interface{}{
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{
 				"name":   "Test Room",
 				"preset": "public_chat",
 			})
-			res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.name"})
+			res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.name"})
 			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
@@ -88,11 +85,11 @@ func TestRoomCreate(t *testing.T) {
 		// sytest: POST /createRoom creates a room with the given version
 		t.Run("POST /createRoom creates a room with the given version", func(t *testing.T) {
 			t.Parallel()
-			roomID := alice.CreateRoom(t, map[string]interface{}{
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{
 				"room_version": "2",
 				"preset":       "public_chat",
 			})
-			res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.create"})
+			res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.create"})
 			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
@@ -104,10 +101,11 @@ func TestRoomCreate(t *testing.T) {
 		t.Run("POST /createRoom makes a private room with invites", func(t *testing.T) {
 			t.Parallel()
 
-			doCreateRoom(t, alice, map[string]interface{}{
+			res := alice.CreateRoom(t, map[string]interface{}{
 				"visibility": "private",
 				"invite":     []string{bob.UserID},
-			}, match.HTTPResponse{
+			})
+			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 200,
 				JSON: []match.JSON{
 					match.JSONKeyTypeEqual("room_id", gjson.String),
@@ -118,11 +116,12 @@ func TestRoomCreate(t *testing.T) {
 		t.Run("POST /createRoom rejects attempts to create rooms with numeric versions", func(t *testing.T) {
 			t.Parallel()
 
-			doCreateRoom(t, alice, map[string]interface{}{
+			res := alice.CreateRoom(t, map[string]interface{}{
 				"visibility":   "private",
 				"room_version": 1,
 				"preset":       "public_chat",
-			}, match.HTTPResponse{
+			})
+			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 400,
 				JSON: []match.JSON{
 					match.JSONKeyEqual("errcode", "M_BAD_JSON"),
@@ -133,11 +132,12 @@ func TestRoomCreate(t *testing.T) {
 		t.Run("POST /createRoom rejects attempts to create rooms with unknown versions", func(t *testing.T) {
 			t.Parallel()
 
-			doCreateRoom(t, alice, map[string]interface{}{
+			res := alice.CreateRoom(t, map[string]interface{}{
 				"visibility":   "private",
 				"room_version": "ahfgwjyerhgiuveisbruvybseyrugvi",
 				"preset":       "public_chat",
-			}, match.HTTPResponse{
+			})
+			must.MatchResponse(t, res, match.HTTPResponse{
 				StatusCode: 400,
 				JSON: []match.JSON{
 					match.JSONKeyEqual("errcode", "M_UNSUPPORTED_ROOM_VERSION"),
@@ -146,7 +146,7 @@ func TestRoomCreate(t *testing.T) {
 		})
 		// sytest: Rooms can be created with an initial invite list (SYN-205)
 		t.Run("Rooms can be created with an initial invite list (SYN-205)", func(t *testing.T) {
-			roomID := alice.CreateRoom(t, map[string]interface{}{
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{
 				"invite": []string{bob.UserID},
 			})
 
@@ -155,7 +155,7 @@ func TestRoomCreate(t *testing.T) {
 
 		// sytest: Can /sync newly created room
 		t.Run("Can /sync newly created room", func(t *testing.T) {
-			roomID := alice.CreateRoom(t, map[string]interface{}{})
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{})
 
 			// This will do the syncing for us
 			alice.SendEventSynced(t, roomID, b.Event{
@@ -166,7 +166,7 @@ func TestRoomCreate(t *testing.T) {
 
 		// sytest: POST /createRoom ignores attempts to set the room version via creation_content
 		t.Run("POST /createRoom ignores attempts to set the room version via creation_content", func(t *testing.T) {
-			roomID := alice.CreateRoom(t, map[string]interface{}{
+			roomID := alice.MustCreateRoom(t, map[string]interface{}{
 				"creation_content": map[string]interface{}{
 					"test":         "azerty",
 					"room_version": "test",

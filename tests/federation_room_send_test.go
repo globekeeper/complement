@@ -4,10 +4,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matrix-org/complement"
 	"github.com/matrix-org/gomatrixserverlib"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/federation"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/federation"
 )
 
 // TODO:
@@ -18,12 +20,12 @@ import (
 
 // Tests that the server is capable of making outbound /send requests
 func TestOutboundFederationSend(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	waiter := NewWaiter()
+	waiter := helpers.NewWaiter()
 	wantEventType := "m.room.message"
 
 	// create a remote homeserver
@@ -32,7 +34,7 @@ func TestOutboundFederationSend(t *testing.T) {
 		federation.HandleMakeSendJoinRequests(),
 		federation.HandleTransactionRequests(
 			// listen for PDU events in transactions
-			func(ev *gomatrixserverlib.Event) {
+			func(ev gomatrixserverlib.PDU) {
 				defer waiter.Finish()
 
 				if ev.Type() != wantEventType {
@@ -52,7 +54,7 @@ func TestOutboundFederationSend(t *testing.T) {
 	roomAlias := srv.MakeAliasMapping("flibble", serverRoom.RoomID)
 
 	// the local homeserver joins the room
-	alice.JoinRoom(t, roomAlias, []string{deployment.Config.HostnameRunningComplement})
+	alice.MustJoinRoom(t, roomAlias, []string{deployment.GetConfig().HostnameRunningComplement})
 
 	// the local homeserver sends an event into the room
 	alice.SendEventSynced(t, serverRoom.RoomID, b.Event{

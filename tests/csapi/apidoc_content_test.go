@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/matrix-org/complement/internal/b"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/helpers"
 	"github.com/matrix-org/complement/internal/data"
 )
 
 func TestContent(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 	wantContentType := "image/png"
 	// sytest: POST /media/v3/upload can create an upload
 	mxcUri := alice.UploadContent(t, data.MatrixPng, "test.png", wantContentType)

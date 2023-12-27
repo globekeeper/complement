@@ -6,11 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/federation"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/federation"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
+	"github.com/matrix-org/gomatrixserverlib/fclient"
+	"github.com/matrix-org/gomatrixserverlib/spec"
 
 	"github.com/matrix-org/gomatrixserverlib"
 	"github.com/tidwall/gjson"
@@ -19,20 +22,20 @@ import (
 // Test that a client can write `m.direct` account data and get told about updates to that event.
 // Requires a functioning account data implementation.
 func TestWriteMDirectAccountData(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer func() {
 		// additional logging to debug https://github.com/matrix-org/synapse/issues/13334
 		t.Logf("%s: TestWriteMDirectAccountData complete: destroying HS deployment", time.Now())
 		deployment.Destroy(t)
 	}()
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	roomID := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{
 		"invite":    []string{bob.UserID},
 		"is_direct": true,
 	})
-	alice.SetGlobalAccountData(t, "m.direct", map[string]interface{}{
+	alice.MustSetGlobalAccountData(t, "m.direct", map[string]interface{}{
 		bob.UserID: []string{roomID},
 	})
 
@@ -40,31 +43,23 @@ func TestWriteMDirectAccountData(t *testing.T) {
 		if r.Get("type").Str != "m.direct" {
 			return false
 		}
-		content := r.Get("content")
-		rooms := content.Get(bob.UserID)
-		if !rooms.Exists() || !rooms.IsArray() {
-			t.Errorf("m.direct event missing rooms array for user %s", bob.UserID)
-			return false
-		}
-		if rooms.Array()[0].Str != roomID {
-			t.Errorf("m.direct room for %s mismatch: got %v want %v", bob.UserID, rooms.Str, roomID)
-		}
+		must.MatchGJSON(t, r, match.JSONKeyEqual("content."+client.GjsonEscape(bob.UserID), []string{roomID}))
 		return true
 	}
 	t.Logf("%s: global account data set; syncing until it arrives", time.Now()) // synapse#13334
 	since := alice.MustSyncUntil(t, client.SyncReq{}, client.SyncGlobalAccountDataHas(checkAccountData))
 	// now update the DM room and test that incremental syncing also pushes new account data
-	roomID = alice.CreateRoom(t, map[string]interface{}{
+	roomID = alice.MustCreateRoom(t, map[string]interface{}{
 		"invite":    []string{bob.UserID},
 		"is_direct": true,
 	})
-	alice.SetGlobalAccountData(t, "m.direct", map[string]interface{}{
+	alice.MustSetGlobalAccountData(t, "m.direct", map[string]interface{}{
 		bob.UserID: []string{roomID},
 	})
 	alice.MustSyncUntil(t, client.SyncReq{Since: since}, client.SyncGlobalAccountDataHas(checkAccountData))
 
 	// check that manually GETing the account data also works with the new updated value
-	must.MatchResponse(t, alice.GetGlobalAccountData(t, "m.direct"), match.HTTPResponse{
+	must.MatchResponse(t, alice.MustGetGlobalAccountData(t, "m.direct"), match.HTTPResponse{
 		StatusCode: 200,
 		JSON: []match.JSON{
 			match.JSONKeyEqual(client.GjsonEscape(bob.UserID), []interface{}{roomID}),
@@ -75,12 +70,12 @@ func TestWriteMDirectAccountData(t *testing.T) {
 // Test that the `is_direct` flag on m.room.member invites propagate to the target user. Both users
 // are on the same homeserver.
 func TestIsDirectFlagLocal(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	roomID := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{
 		"invite":    []string{bob.UserID},
 		"is_direct": true,
 	})
@@ -108,7 +103,7 @@ func TestIsDirectFlagLocal(t *testing.T) {
 // Test that the `is_direct` flag on m.room.member invites propagate to the target user. Users
 // are on different homeservers.
 func TestIsDirectFlagFederation(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
 	srv := federation.NewServer(t, deployment,
@@ -119,12 +114,12 @@ func TestIsDirectFlagFederation(t *testing.T) {
 	srv.UnexpectedRequestsAreErrors = false // we expect to be pushed events
 	cancel := srv.Listen()
 	defer cancel()
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 	roomVer := alice.GetDefaultRoomVersion(t)
 
 	bob := srv.UserID("bob")
 	room := srv.MustMakeRoom(t, roomVer, federation.InitialRoomEvents(roomVer, bob))
-	dmInviteEvent := srv.MustCreateEvent(t, room, b.Event{
+	dmInviteEvent := srv.MustCreateEvent(t, room, federation.Event{
 		Type:     "m.room.member",
 		StateKey: &alice.UserID,
 		Sender:   bob,
@@ -132,13 +127,13 @@ func TestIsDirectFlagFederation(t *testing.T) {
 			"membership": "invite",
 			"is_direct":  true,
 		},
-	}).Headered(roomVer)
-	inviteReq, err := gomatrixserverlib.NewInviteV2Request(dmInviteEvent, []gomatrixserverlib.InviteV2StrippedState{})
+	})
+	inviteReq, err := fclient.NewInviteV2Request(dmInviteEvent, []gomatrixserverlib.InviteStrippedState{})
 	if err != nil {
 		t.Fatalf("failed to make invite request: %s", err)
 	}
 	_, since := alice.MustSync(t, client.SyncReq{})
-	_, err = srv.FederationClient(deployment).SendInviteV2(context.Background(), "hs1", inviteReq)
+	_, err = srv.FederationClient(deployment).SendInviteV2(context.Background(), spec.ServerName(srv.ServerName()), "hs1", inviteReq)
 	if err != nil {
 		t.Fatalf("failed to send invite v2: %s", err)
 	}

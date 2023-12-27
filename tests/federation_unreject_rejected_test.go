@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/federation"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/federation"
 )
 
 // TestUnrejectRejectedEvents creates two events: A and B.
@@ -17,9 +18,9 @@ import (
 // event B is unrejected on the second pass and will appear in
 // the /sync response AFTER event A.
 func TestUnrejectRejectedEvents(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	srv := federation.NewServer(t, deployment,
 		federation.HandleKeyRequests(),
@@ -35,7 +36,7 @@ func TestUnrejectRejectedEvents(t *testing.T) {
 	serverRoom := srv.MustMakeRoom(t, ver, federation.InitialRoomEvents(ver, bob))
 
 	// Join Alice to the new room on the federation server.
-	alice.JoinRoom(t, serverRoom.RoomID, []string{srv.ServerName()})
+	alice.MustJoinRoom(t, serverRoom.RoomID, []string{srv.ServerName()})
 	alice.MustSyncUntil(
 		t, client.SyncReq{},
 		client.SyncJoinedTo(alice.UserID, serverRoom.RoomID),
@@ -44,20 +45,20 @@ func TestUnrejectRejectedEvents(t *testing.T) {
 	// Create the events. Event A will have whatever the current forward
 	// extremities are as prev events. Event B will refer to event A only
 	// to guarantee the test will work.
-	eventA := srv.MustCreateEvent(t, serverRoom, b.Event{
+	eventA := srv.MustCreateEvent(t, serverRoom, federation.Event{
 		Type:   "m.event.a",
 		Sender: bob,
 		Content: map[string]interface{}{
 			"event": "A",
 		},
 	})
-	eventB := srv.MustCreateEvent(t, serverRoom, b.Event{
-		Type:       "m.event.b",
-		Sender:     bob,
-		PrevEvents: []string{eventA.EventID()},
+	eventB := srv.MustCreateEvent(t, serverRoom, federation.Event{
+		Type:   "m.event.b",
+		Sender: bob,
 		Content: map[string]interface{}{
 			"event": "B",
 		},
+		PrevEvents: []string{eventA.EventID()},
 	})
 
 	// Send event B into the room. Event A at this point is unknown

@@ -7,21 +7,26 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 func TestLeftRoomFixture(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	charlie := deployment.RegisterUser(t, "hs1", "charlie", "sufficiently_long_password_charlie", false)
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	charlie := deployment.Register(t, "hs1", helpers.RegistrationOpts{
+		LocalpartSuffix: "charlie",
+		Password:        "sufficiently_long_password_charlie",
+	})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{
 		"initial_state": []map[string]interface{}{
 			{
 				"content": map[string]interface{}{
@@ -34,7 +39,7 @@ func TestLeftRoomFixture(t *testing.T) {
 		"preset": "public_chat",
 	})
 
-	bob.JoinRoom(t, roomID, nil)
+	bob.MustJoinRoom(t, roomID, nil)
 
 	alice.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(bob.UserID, roomID))
 
@@ -85,7 +90,7 @@ func TestLeftRoomFixture(t *testing.T) {
 		},
 	})
 
-	bob.LeaveRoom(t, roomID)
+	bob.MustLeaveRoom(t, roomID)
 
 	alice.MustSyncUntil(t, client.SyncReq{}, client.SyncLeftFrom(bob.UserID, roomID))
 
@@ -117,13 +122,13 @@ func TestLeftRoomFixture(t *testing.T) {
 
 	// Have charlie join the room, to check against /members calls later
 	// (Bob should not see Charlie in /members after he leaves the room.)
-	charlie.JoinRoom(t, roomID, nil)
+	charlie.MustJoinRoom(t, roomID, nil)
 	alice.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(charlie.UserID, roomID))
 
 	// sytest: Can get rooms/{roomId}/state for a departed room (SPEC-216)
 	t.Run("Can get rooms/{roomId}/state for a departed room", func(t *testing.T) {
 		// Bob gets the old state
-		resp := bob.MustDoFunc(
+		resp := bob.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v3", "rooms", roomID, "state", madeUpStateKey},
@@ -135,7 +140,7 @@ func TestLeftRoomFixture(t *testing.T) {
 		})
 
 		// ...While Alice gets the new state
-		resp = alice.MustDoFunc(
+		resp = alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v3", "rooms", roomID, "state", madeUpStateKey},
@@ -149,7 +154,7 @@ func TestLeftRoomFixture(t *testing.T) {
 
 	// sytest: Can get rooms/{roomId}/members for a departed room (SPEC-216)
 	t.Run("Can get rooms/{roomId}/members for a departed room", func(t *testing.T) {
-		resp := bob.MustDoFunc(
+		resp := bob.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v3", "rooms", roomID, "members"},
@@ -174,7 +179,7 @@ func TestLeftRoomFixture(t *testing.T) {
 
 	// sytest: Can get rooms/{roomId}/messages for a departed room (SPEC-216)
 	t.Run("Can get rooms/{roomId}/messages for a departed room", func(t *testing.T) {
-		resp := bob.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(url.Values{
+		resp := bob.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(url.Values{
 			"dir":   []string{"b"},
 			"limit": []string{"3"},
 			"from":  []string{bobSinceToken},
@@ -200,7 +205,7 @@ func TestLeftRoomFixture(t *testing.T) {
 	// sytest: Can get 'm.room.name' state for a departed room (SPEC-216)
 	t.Run("Can get 'm.room.name' state for a departed room", func(t *testing.T) {
 		// Bob gets the old name
-		resp := bob.MustDoFunc(
+		resp := bob.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.name"},
@@ -212,7 +217,7 @@ func TestLeftRoomFixture(t *testing.T) {
 		})
 
 		// ...While Alice gets the new name
-		resp = alice.MustDoFunc(
+		resp = alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v3", "rooms", roomID, "state", "m.room.name"},
@@ -227,7 +232,7 @@ func TestLeftRoomFixture(t *testing.T) {
 	// sytest: Getting messages going forward is limited for a departed room (SPEC-216)
 	t.Run("Getting messages going forward is limited for a departed room", func(t *testing.T) {
 		// TODO: try this with the most recent since token too
-		resp := bob.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(url.Values{
+		resp := bob.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(url.Values{
 			"dir":   []string{"f"},
 			"limit": []string{"100"},
 			"from":  []string{bobSinceToken},

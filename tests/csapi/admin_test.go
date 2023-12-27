@@ -7,29 +7,34 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 // Check if this homeserver supports Synapse-style admin registration.
 // Not all images support this currently.
 func TestCanRegisterAdmin(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
-	deployment.RegisterUser(t, "hs1", "admin", "adminpassword", true)
+	deployment.Register(t, "hs1", helpers.RegistrationOpts{
+		IsAdmin: true,
+	})
 }
 
 // Test if the implemented /_synapse/admin/v1/send_server_notice behaves as expected
 func TestServerNotices(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
-	admin := deployment.RegisterUser(t, "hs1", "admin", "adminpassword", true)
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	admin := deployment.Register(t, "hs1", helpers.RegistrationOpts{
+		IsAdmin: true,
+	})
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	reqBody := client.WithJSONBody(t, map[string]interface{}{
-		"user_id": "@alice:hs1",
+		"user_id": alice.UserID,
 		"content": map[string]interface{}{
 			"msgtype": "m.text",
 			"body":    "hello from server notices!",
@@ -40,7 +45,7 @@ func TestServerNotices(t *testing.T) {
 		roomID  string
 	)
 	t.Run("/send_server_notice is not allowed as normal user", func(t *testing.T) {
-		res := alice.DoFunc(t, "POST", []string{"_synapse", "admin", "v1", "send_server_notice"})
+		res := alice.Do(t, "POST", []string{"_synapse", "admin", "v1", "send_server_notice"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: http.StatusForbidden,
 			JSON: []match.JSON{
@@ -55,7 +60,7 @@ func TestServerNotices(t *testing.T) {
 		roomID = syncUntilInvite(t, alice)
 	})
 	t.Run("Alice cannot reject the invite", func(t *testing.T) {
-		res := alice.DoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "leave"})
+		res := alice.LeaveRoom(t, roomID)
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: http.StatusForbidden,
 			JSON: []match.JSON{
@@ -64,11 +69,11 @@ func TestServerNotices(t *testing.T) {
 		})
 	})
 	t.Run("Alice can join the alert room", func(t *testing.T) {
-		alice.JoinRoom(t, roomID, []string{})
+		alice.MustJoinRoom(t, roomID, []string{})
 		alice.MustSyncUntil(t, client.SyncReq{}, client.SyncTimelineHasEventID(roomID, eventID))
 	})
 	t.Run("Alice can leave the alert room, after joining it", func(t *testing.T) {
-		alice.LeaveRoom(t, roomID)
+		alice.MustLeaveRoom(t, roomID)
 	})
 	t.Run("After leaving the alert room and on re-invitation, no new room is created", func(t *testing.T) {
 		sendServerNotice(t, admin, reqBody, nil)
@@ -91,9 +96,9 @@ func TestServerNotices(t *testing.T) {
 func sendServerNotice(t *testing.T, admin *client.CSAPI, reqBody client.RequestOpt, txnID *string) (eventID string) {
 	var res *http.Response
 	if txnID != nil {
-		res = admin.MustDoFunc(t, "PUT", []string{"_synapse", "admin", "v1", "send_server_notice", *txnID}, reqBody)
+		res = admin.MustDo(t, "PUT", []string{"_synapse", "admin", "v1", "send_server_notice", *txnID}, reqBody)
 	} else {
-		res = admin.MustDoFunc(t, "POST", []string{"_synapse", "admin", "v1", "send_server_notice"}, reqBody)
+		res = admin.MustDo(t, "POST", []string{"_synapse", "admin", "v1", "send_server_notice"}, reqBody)
 	}
 	body := must.MatchResponse(t, res, match.HTTPResponse{
 		StatusCode: http.StatusOK,

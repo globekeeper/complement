@@ -7,17 +7,19 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 // Request the room summary and ensure the expected rooms are in the response.
 func requestAndAssertSummary(t *testing.T, user *client.CSAPI, space string, expected_rooms []interface{}) {
 	t.Helper()
 
-	res := user.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", space, "hierarchy"})
+	res := user.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", space, "hierarchy"})
 	must.MatchResponse(t, res, match.HTTPResponse{
 		JSON: []match.JSON{
 			match.JSONCheckOff("rooms", expected_rooms, func(r gjson.Result) interface{} {
@@ -35,12 +37,12 @@ func requestAndAssertSummary(t *testing.T, user *client.CSAPI, space string, exp
 // The user should be unable to see the room in the spaces summary unless they
 // are a member of the space.
 func TestRestrictedRoomsSpacesSummaryLocal(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
 	// Create the rooms
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	space := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	space := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "Space",
 		"creation_content": map[string]interface{}{
@@ -58,7 +60,7 @@ func TestRestrictedRoomsSpacesSummaryLocal(t *testing.T) {
 		},
 	})
 	// The room is room version 8 which supports the restricted join_rule.
-	room := alice.CreateRoom(t, map[string]interface{}{
+	room := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset":       "public_chat",
 		"name":         "Room",
 		"room_version": "8",
@@ -91,13 +93,13 @@ func TestRestrictedRoomsSpacesSummaryLocal(t *testing.T) {
 	t.Logf("Room: %s", room)
 
 	// Create a second user on the same homeserver.
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	// Querying the space returns only the space, as the room is restricted.
 	requestAndAssertSummary(t, bob, space, []interface{}{space})
 
 	// Join the space, and now the restricted room should appear.
-	bob.JoinRoom(t, space, []string{"hs1"})
+	bob.MustJoinRoom(t, space, []string{"hs1"})
 	bob.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(bob.UserID, space))
 	requestAndAssertSummary(t, bob, space, []interface{}{space, room})
 }
@@ -116,13 +118,13 @@ func TestRestrictedRoomsSpacesSummaryLocal(t *testing.T) {
 // different homeservers, and one might not have the proper information needed to
 // decide if a user is in a room.
 func TestRestrictedRoomsSpacesSummaryFederation(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintFederationTwoLocalOneRemote)
+	deployment := complement.Deploy(t, 2)
 	defer deployment.Destroy(t)
 
 	// Create the rooms
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	space := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	space := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "Space",
 		"creation_content": map[string]interface{}{
@@ -141,8 +143,8 @@ func TestRestrictedRoomsSpacesSummaryFederation(t *testing.T) {
 
 	// The room is room version 8 which supports the restricted join_rule and is
 	// created on hs2.
-	charlie := deployment.Client(t, "hs2", "@charlie:hs2")
-	room := charlie.CreateRoom(t, map[string]interface{}{
+	charlie := deployment.Register(t, "hs2", helpers.RegistrationOpts{})
+	room := charlie.MustCreateRoom(t, map[string]interface{}{
 		"preset":       "public_chat",
 		"name":         "Room",
 		"room_version": "8",
@@ -181,7 +183,7 @@ func TestRestrictedRoomsSpacesSummaryFederation(t *testing.T) {
 
 	// charlie joins the space and now hs2 knows that alice is in the space (and
 	// can join the room).
-	charlie.JoinRoom(t, space, []string{"hs1"})
+	charlie.MustJoinRoom(t, space, []string{"hs1"})
 	charlie.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(charlie.UserID, space))
 
 	// The restricted room should appear for alice (who is in the space).

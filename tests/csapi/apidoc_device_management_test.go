@@ -5,17 +5,20 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 func TestDeviceManagement(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
-	unauthedClient := deployment.Client(t, "hs1", "")
-	authedClient := deployment.RegisterUser(t, "hs1", "test_device_management_user", "superuser", false)
+	unauthedClient := deployment.UnauthenticatedClient(t, "hs1")
+	authedClient := deployment.Register(t, "hs1", helpers.RegistrationOpts{
+		Password: "superuser",
+	})
 
 	// sytest: GET /device/{deviceId}
 	t.Run("GET /device/{deviceId}", func(t *testing.T) {
@@ -30,9 +33,9 @@ func TestDeviceManagement(t *testing.T) {
 			"device_id":                   deviceID,
 			"initial_device_display_name": "device display",
 		})
-		_ = unauthedClient.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "login"}, reqBody)
+		_ = unauthedClient.MustDo(t, "POST", []string{"_matrix", "client", "v3", "login"}, reqBody)
 
-		res := authedClient.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", deviceID})
+		res := authedClient.MustDo(t, "GET", []string{"_matrix", "client", "v3", "devices", deviceID})
 
 		must.MatchResponse(t, res, match.HTTPResponse{
 			JSON: []match.JSON{
@@ -45,7 +48,7 @@ func TestDeviceManagement(t *testing.T) {
 	// sytest: GET /device/{deviceId} gives a 404 for unknown devices
 	t.Run("GET /device/{deviceId} gives a 404 for unknown devices", func(t *testing.T) {
 
-		res := authedClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", "unknown_device"})
+		res := authedClient.Do(t, "GET", []string{"_matrix", "client", "v3", "devices", "unknown_device"})
 
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 404,
@@ -66,13 +69,13 @@ func TestDeviceManagement(t *testing.T) {
 			"device_id":                   deviceIDSecond,
 			"initial_device_display_name": "device display",
 		})
-		_ = unauthedClient.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "login"}, reqBody)
+		_ = unauthedClient.MustDo(t, "POST", []string{"_matrix", "client", "v3", "login"}, reqBody)
 
 		wantDeviceIDs := map[string]bool{
 			deviceID:       true,
 			deviceIDSecond: true,
 		}
-		res := authedClient.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices"})
+		res := authedClient.MustDo(t, "GET", []string{"_matrix", "client", "v3", "devices"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 			JSON: []match.JSON{
@@ -97,9 +100,9 @@ func TestDeviceManagement(t *testing.T) {
 		reqBody := client.WithJSONBody(t, map[string]interface{}{
 			"display_name": "new device display",
 		})
-		_ = authedClient.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "devices", deviceID}, reqBody)
+		_ = authedClient.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "devices", deviceID}, reqBody)
 
-		res := authedClient.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", deviceID})
+		res := authedClient.MustDo(t, "GET", []string{"_matrix", "client", "v3", "devices", deviceID})
 
 		must.MatchResponse(t, res, match.HTTPResponse{
 			JSON: []match.JSON{
@@ -114,7 +117,7 @@ func TestDeviceManagement(t *testing.T) {
 		reqBody := client.WithJSONBody(t, map[string]interface{}{
 			"display_name": "new device display",
 		})
-		res := authedClient.DoFunc(t, "PUT", []string{"_matrix", "client", "v3", "devices", "unknown_device"}, reqBody)
+		res := authedClient.Do(t, "PUT", []string{"_matrix", "client", "v3", "devices", "unknown_device"}, reqBody)
 
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 404,
@@ -127,7 +130,7 @@ func TestDeviceManagement(t *testing.T) {
 		session2.MustSync(t, client.SyncReq{})
 
 		// sytest: DELETE /device/{deviceId} with no body gives a 401
-		res := authedClient.DoFunc(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID})
+		res := authedClient.Do(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 401,
 			JSON: []match.JSON{
@@ -149,7 +152,7 @@ func TestDeviceManagement(t *testing.T) {
 			},
 		})
 
-		res = authedClient.DoFunc(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
+		res = authedClient.Do(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 401,
 			JSON: []match.JSON{
@@ -174,26 +177,29 @@ func TestDeviceManagement(t *testing.T) {
 			},
 		})
 
-		res = authedClient.DoFunc(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
+		res = authedClient.Do(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 		})
 
 		// verify device is deleted
-		res = authedClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
+		res = authedClient.Do(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 404,
 		})
 
 		// check that the accesstoken is invalidated
-		res = session2.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "sync"})
+		res = session2.Do(t, "GET", []string{"_matrix", "client", "v3", "sync"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 401,
 		})
 	})
 	// sytest: DELETE /device/{deviceId} requires UI auth user to match device owner
 	t.Run("DELETE /device/{deviceId} requires UI auth user to match device owner", func(t *testing.T) {
-		bob := deployment.RegisterUser(t, "hs1", "bob", "bobspassword", false)
+		bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{
+			LocalpartSuffix: "bob",
+			Password:        "bobspassword",
+		})
 
 		newDeviceID, session2 := createSession(t, deployment, authedClient.UserID, "superuser")
 		session2.MustSync(t, client.SyncReq{})
@@ -210,13 +216,13 @@ func TestDeviceManagement(t *testing.T) {
 			},
 		})
 
-		res := authedClient.DoFunc(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
+		res := authedClient.Do(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 403,
 		})
 
 		// verify device still exists
-		res = authedClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
+		res = authedClient.Do(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 		})
@@ -233,13 +239,13 @@ func TestDeviceManagement(t *testing.T) {
 			},
 		})
 
-		res = authedClient.DoFunc(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
+		res = authedClient.Do(t, "DELETE", []string{"_matrix", "client", "v3", "devices", newDeviceID}, reqBody)
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 		})
 
 		// verify device is deleted
-		res = authedClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
+		res = authedClient.Do(t, "GET", []string{"_matrix", "client", "v3", "devices", newDeviceID})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 404,
 		})
