@@ -23,13 +23,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	complementRuntime "github.com/matrix-org/complement/runtime"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -71,6 +74,54 @@ func (d *Deployer) log(str string, args ...interface{}) {
 		return
 	}
 	log.Printf(str, args...)
+}
+
+// CreateDirtyServer creates a new dirty server on the dirty network, creating one if needed.
+// This homeserver should be added to the dirty deployment. The hsName should start as 'hs1', then
+// 'hs2' ... 'hsN'.
+func (d *Deployer) CreateDirtyServer(hsName string) (*HomeserverDeployment, error) {
+	networkName, err := createNetworkIfNotExists(d.Docker, d.config.PackageNamespace, "dirty")
+	if err != nil {
+		return nil, fmt.Errorf("CreateDirtyDeployment: %w", err)
+	}
+	baseImageURI := d.config.BaseImageURI
+	// Use HS specific base image if defined
+	if uri, ok := d.config.BaseImageURIs[hsName]; ok {
+		baseImageURI = uri
+	}
+
+	hsDeployment, err := deployImage(
+		d.Docker, baseImageURI, fmt.Sprintf("complement_%s_dirty_%s", d.config.PackageNamespace, hsName),
+		d.config.PackageNamespace, "", hsName, nil, "dirty",
+		networkName, d.config,
+	)
+	if err != nil {
+		if hsDeployment != nil && hsDeployment.ContainerID != "" {
+			// print logs to help debug
+			printLogs(d.Docker, hsDeployment.ContainerID, "dirty")
+		}
+		return nil, fmt.Errorf("CreateDirtyServer: Failed to deploy image %v : %w", baseImageURI, err)
+	}
+	return hsDeployment, nil
+}
+
+// CreateDirtyDeployment creates a clean HS without any blueprints. More HSes can be added later via
+// CreateDirtyServer()
+func (d *Deployer) CreateDirtyDeployment() (*Deployment, error) {
+	hsName := "hs1"
+	hsDeployment, err := d.CreateDirtyServer(hsName)
+	if err != nil {
+		return nil, err
+	}
+	// assign the HS to the deployment
+	return &Deployment{
+		Deployer: d,
+		Dirty:    true,
+		HS: map[string]*HomeserverDeployment{
+			hsName: hsDeployment,
+		},
+		Config: d.config,
+	}, nil
 }
 
 func (d *Deployer) Deploy(ctx context.Context, blueprintName string) (*Deployment, error) {
@@ -145,27 +196,43 @@ func (d *Deployer) Deploy(ctx context.Context, blueprintName string) (*Deploymen
 	return dep, lastErr
 }
 
+func (d *Deployer) PrintLogs(dep *Deployment) {
+	for _, hsDep := range dep.HS {
+		printLogs(d.Docker, hsDep.ContainerID, hsDep.ContainerID)
+	}
+}
+
 // Destroy a deployment. This will kill all running containers.
-func (d *Deployer) Destroy(dep *Deployment, printServerLogs bool) {
+func (d *Deployer) Destroy(dep *Deployment, printServerLogs bool, testName string, failed bool) {
 	for _, hsDep := range dep.HS {
 		if printServerLogs {
 			// If we want the logs we gracefully stop the containers to allow
 			// the logs to be flushed.
-			timeout := 1 * time.Second
-			err := d.Docker.ContainerStop(context.Background(), hsDep.ContainerID, &timeout)
+			oneSecond := 1
+			err := d.Docker.ContainerStop(context.Background(), hsDep.ContainerID, container.StopOptions{
+				Timeout: &oneSecond,
+			})
 			if err != nil {
 				log.Printf("Destroy: Failed to destroy container %s : %s\n", hsDep.ContainerID, err)
 			}
 
 			printLogs(d.Docker, hsDep.ContainerID, hsDep.ContainerID)
 		} else {
-			err := d.Docker.ContainerKill(context.Background(), hsDep.ContainerID, "KILL")
+			err := complementRuntime.ContainerKillFunc(d.Docker, hsDep.ContainerID)
 			if err != nil {
 				log.Printf("Destroy: Failed to destroy container %s : %s\n", hsDep.ContainerID, err)
 			}
 		}
 
-		err := d.Docker.ContainerRemove(context.Background(), hsDep.ContainerID, types.ContainerRemoveOptions{
+		result, err := d.executePostScript(hsDep, testName, failed)
+		if err != nil {
+			log.Printf("Failed to execute post test script: %s - %s", err, string(result))
+		}
+		if printServerLogs && err == nil && result != nil {
+			log.Printf("Post test script result: %s", string(result))
+		}
+
+		err = d.Docker.ContainerRemove(context.Background(), hsDep.ContainerID, types.ContainerRemoveOptions{
 			Force: true,
 		})
 		if err != nil {
@@ -174,30 +241,74 @@ func (d *Deployer) Destroy(dep *Deployment, printServerLogs bool) {
 	}
 }
 
-// Restart a homeserver deployment.
-func (d *Deployer) Restart(hsDep *HomeserverDeployment, cfg *config.Complement) error {
-	ctx := context.Background()
-	err := d.Docker.ContainerStop(ctx, hsDep.ContainerID, &cfg.SpawnHSTimeout)
-	if err != nil {
-		return fmt.Errorf("Restart: Failed to stop container %s: %s", hsDep.ContainerID, err)
+func (d *Deployer) executePostScript(hsDep *HomeserverDeployment, testName string, failed bool) ([]byte, error) {
+	if d.config.PostTestScript == "" {
+		return nil, nil
 	}
+	cmd := exec.Command(d.config.PostTestScript, hsDep.ContainerID, testName, strconv.FormatBool(failed))
 
-	err = d.Docker.ContainerStart(ctx, hsDep.ContainerID, types.ContainerStartOptions{})
+	return cmd.CombinedOutput()
+}
+
+func (d *Deployer) PauseServer(hsDep *HomeserverDeployment) error {
+	ctx := context.Background()
+	err := d.Docker.ContainerPause(ctx, hsDep.ContainerID)
 	if err != nil {
-		return fmt.Errorf("Restart: Failed to start container %s: %s", hsDep.ContainerID, err)
+		return fmt.Errorf("failed to pause container %s: %s", hsDep.ContainerID, err)
+	}
+	return nil
+}
+
+func (d *Deployer) UnpauseServer(hsDep *HomeserverDeployment) error {
+	ctx := context.Background()
+	err := d.Docker.ContainerUnpause(ctx, hsDep.ContainerID)
+	if err != nil {
+		return fmt.Errorf("failed to unpause container %s: %s", hsDep.ContainerID, err)
+	}
+	return nil
+}
+
+func (d *Deployer) StopServer(hsDep *HomeserverDeployment) error {
+	ctx := context.Background()
+	secs := int(d.config.SpawnHSTimeout.Seconds())
+	err := d.Docker.ContainerStop(ctx, hsDep.ContainerID, container.StopOptions{
+		Timeout: &secs,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to stop container %s: %s", hsDep.ContainerID, err)
+	}
+	return nil
+}
+
+// Restart a homeserver deployment.
+func (d *Deployer) Restart(hsDep *HomeserverDeployment) error {
+	if err := d.StopServer(hsDep); err != nil {
+		return fmt.Errorf("Restart: %s", err)
+	}
+	if err := d.StartServer(hsDep); err != nil {
+		return fmt.Errorf("Restart: %s", err)
+	}
+	return nil
+}
+
+func (d *Deployer) StartServer(hsDep *HomeserverDeployment) error {
+	ctx := context.Background()
+	err := d.Docker.ContainerStart(ctx, hsDep.ContainerID, types.ContainerStartOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to start container %s: %s", hsDep.ContainerID, err)
 	}
 
 	// Wait for the container to be ready.
 	baseURL, fedBaseURL, err := waitForPorts(ctx, d.Docker, hsDep.ContainerID)
 	if err != nil {
-		return fmt.Errorf("Restart: Failed to get ports for container %s: %s", hsDep.ContainerID, err)
+		return fmt.Errorf("failed to get ports for container %s: %s", hsDep.ContainerID, err)
 	}
 	hsDep.SetEndpoints(baseURL, fedBaseURL)
 
-	stopTime := time.Now().Add(cfg.SpawnHSTimeout)
+	stopTime := time.Now().Add(d.config.SpawnHSTimeout)
 	_, err = waitForContainer(ctx, d.Docker, hsDep, stopTime)
 	if err != nil {
-		return fmt.Errorf("Restart: Failed to restart container %s: %s", hsDep.ContainerID, err)
+		return fmt.Errorf("failed to wait for container %s: %s", hsDep.ContainerID, err)
 	}
 
 	return nil
@@ -256,16 +367,17 @@ func deployImage(
 			"complement_hs_name":   hsName,
 		},
 	}, &container.HostConfig{
+		CapAdd:          []string{"NET_ADMIN"}, // TODO : this should be some sort of option
 		PublishAllPorts: true,
 		PortBindings: nat.PortMap{
 			nat.Port("8008/tcp"): []nat.PortBinding{
 				{
-					HostIP: "127.0.0.1",
+					HostIP: cfg.HSPortBindingIP,
 				},
 			},
 			nat.Port("8448/tcp"): []nat.PortBinding{
 				{
-					HostIP: "127.0.0.1",
+					HostIP: cfg.HSPortBindingIP,
 				},
 			},
 		},
@@ -349,6 +461,7 @@ func deployImage(
 		AccessTokens:        tokensFromLabels(inspect.Config.Labels),
 		ApplicationServices: asIDToRegistrationFromLabels(inspect.Config.Labels),
 		DeviceIDs:           deviceIDsFromLabels(inspect.Config.Labels),
+		Network:             networkName,
 	}
 
 	stopTime := time.Now().Add(cfg.SpawnHSTimeout)
@@ -476,15 +589,23 @@ type RoundTripper struct {
 func (t *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	// map HS names to localhost:port combos
 	hsName := req.URL.Hostname()
-	dep, ok := t.Deployment.HS[hsName]
-	if !ok {
-		return nil, fmt.Errorf("dockerRoundTripper unknown hostname: '%s'", hsName)
+	if hsName == t.Deployment.Config.HostnameRunningComplement {
+		if req.URL.Port() == "" {
+			req.URL.Host = "localhost"
+		} else {
+			req.URL.Host = "localhost:" + req.URL.Port()
+		}
+	} else {
+		dep, ok := t.Deployment.HS[hsName]
+		if !ok {
+			return nil, fmt.Errorf("dockerRoundTripper unknown hostname: '%s'", hsName)
+		}
+		newURL, err := url.Parse(dep.FedBaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("dockerRoundTripper: failed to parase fedbaseurl for hs: %s", err)
+		}
+		req.URL.Host = newURL.Host
 	}
-	newURL, err := url.Parse(dep.FedBaseURL)
-	if err != nil {
-		return nil, fmt.Errorf("dockerRoundTripper: failed to parase fedbaseurl for hs: %s", err)
-	}
-	req.URL.Host = newURL.Host
 	req.URL.Scheme = "https"
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{

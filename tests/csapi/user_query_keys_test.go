@@ -3,10 +3,11 @@ package csapi_tests
 import (
 	"testing"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 // Endpoint: https://matrix.org/docs/spec/client_server/r0.6.1#post-matrix-client-r0-keys-query
@@ -15,15 +16,15 @@ import (
 // like an array in Python and hence go un-noticed. In Go however it will result in a 400. The correct behaviour is
 // to return a 400. Element iOS uses this erroneous format.
 func TestKeysQueryWithDeviceIDAsObjectFails(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	userID := "@alice:hs1"
-	alice := deployment.Client(t, "hs1", userID)
-	res := alice.DoFunc(t, "POST", []string{"_matrix", "client", "v3", "keys", "query"},
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	res := alice.Do(t, "POST", []string{"_matrix", "client", "v3", "keys", "query"},
 		client.WithJSONBody(t, map[string]interface{}{
 			"device_keys": map[string]interface{}{
-				"@bob:hs1": map[string]bool{
+				bob.UserID: map[string]bool{
 					"device_id1": true,
 					"device_id2": true,
 				},

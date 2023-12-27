@@ -4,7 +4,7 @@
 Complement is configured exclusively through the use of environment variables. These variables are described below.
 
 #### `COMPLEMENT_ALWAYS_PRINT_SERVER_LOGS`
-If 1, always prints the Homeserver container logs even on success.  
+If 1, always prints the Homeserver container logs even on success. When used with COMPLEMENT_ENABLE_DIRTY_RUNS, server logs are only printed once for reused deployments, at the very end of the test suite.  
 - Type: `bool`
 - Default: 0
 
@@ -21,6 +21,11 @@ If 1, prints out more verbose logging such as HTTP request/response bodies.
 - Type: `bool`
 - Default: 0
 
+#### `COMPLEMENT_ENABLE_DIRTY_RUNS`
+If 1, eligible tests will be provided with reusable deployments rather than a clean deployment. Eligible tests are tests run with `Deploy(t, numHomeservers)`. If enabled, COMPLEMENT_ALWAYS_PRINT_SERVER_LOGS and COMPLEMENT_POST_TEST_SCRIPT are run exactly once, at the end of all tests in the package. The post test script is run with the test name "COMPLEMENT_ENABLE_DIRTY_RUNS", and failed=false.  Enabling dirty runs can greatly speed up tests, at the cost of clear server logs and the chance of tests polluting each other. Tests using `OldDeploy` and blueprints will still have a fresh image for each test. Fresh images can still be desirable e.g user directory tests need a clean homeserver else search results can be polluted, tests which can blacklist a server over federation also need isolated deployments to stop failures impacting other tests. For these reasons, there will always be a way for a test to override this setting and get a dedicated deployment.  Eventually, dirty runs will become the default running mode of Complement, with an environment variable to disable this behaviour being added later, once this has stablised.  
+- Type: `bool`
+- Default: 0
+
 #### `COMPLEMENT_HOSTNAME_RUNNING_COMPLEMENT`
 The hostname of Complement from the perspective of a Homeserver running inside a container. This can be useful for container runtimes using another hostname to access the host from a container, like Podman that uses `host.containers.internal` instead.  
 - Type: `string`
@@ -33,6 +38,11 @@ A list of semicolon separated host mounts to mount on every container. The struc
 #### `COMPLEMENT_KEEP_BLUEPRINTS`
 A list of space separated blueprint names to not clean up after running. For example, `one_to_one_room alice` would not delete the homeserver images for the blueprints `alice` and `one_to_one_room`. This can speed up homeserver runs if you frequently run the same base image over and over again. If the base image changes, this should not be set as it means an older version of the base image will be used for the named blueprints.  
 - Type: `[]string`
+
+#### `COMPLEMENT_POST_TEST_SCRIPT`
+An arbitrary script to execute after a test was executed and before the container is removed. This can be used to extract, for example, server logs or database files. The script is passed the parameters: ContainerID, TestName, TestFailed (true/false). When combined with COMPLEMENT_ENABLE_DIRTY_RUNS, the script is called exactly once at the end of the test suite, and is called with the TestName of "COMPLEMENT_ENABLE_DIRTY_RUNS" and TestFailed=false.  
+- Type: `string`
+- Default: ""
 
 #### `COMPLEMENT_SHARE_ENV_PREFIX`
 If set, all environment variables on the host with this prefix will be shared with every homeserver, with the prefix removed. For example, if the prefix was `FOO_` then setting `FOO_BAR=baz` on the host would translate to `BAR=baz` on the container. Useful for passing through extra Homeserver configuration options without sharing all host environment variables.  

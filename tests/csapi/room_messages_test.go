@@ -8,10 +8,12 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 	"github.com/matrix-org/complement/runtime"
 )
 
@@ -19,19 +21,19 @@ import (
 // sytest: GET /rooms/:room_id/messages returns a message
 func TestSendAndFetchMessage(t *testing.T) {
 	runtime.SkipIf(t, runtime.Dendrite) // flakey
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{"preset": "public_chat"})
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{"preset": "public_chat"})
 
 	const testMessage = "TestSendAndFetchMessage"
 
 	_, token := alice.MustSync(t, client.SyncReq{})
 
 	// first use the non-txn endpoint
-	alice.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message"}, client.WithJSONBody(t, map[string]interface{}{
+	alice.MustDo(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message"}, client.WithJSONBody(t, map[string]interface{}{
 		"msgtype": "m.text",
 		"body":    testMessage,
 	}))
@@ -45,7 +47,7 @@ func TestSendAndFetchMessage(t *testing.T) {
 	queryParams := url.Values{}
 	queryParams.Set("dir", "f")
 	queryParams.Set("from", token)
-	res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
+	res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
 	must.MatchResponse(t, res, match.HTTPResponse{
 		StatusCode: http.StatusOK,
 		JSON: []match.JSON{
@@ -62,16 +64,16 @@ func TestSendAndFetchMessage(t *testing.T) {
 // With a non-existent room_id, GET /rooms/:room_id/messages returns 403
 // forbidden ("You aren't a member of the room").
 func TestFetchMessagesFromNonExistentRoom(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 	roomID := "!does-not-exist:hs1"
 
 	// then request messages from the room
 	queryParams := url.Values{}
 	queryParams.Set("dir", "b")
-	res := alice.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
+	res := alice.Do(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
 	must.MatchResponse(t, res, match.HTTPResponse{
 		StatusCode: http.StatusForbidden,
 	})
@@ -80,22 +82,22 @@ func TestFetchMessagesFromNonExistentRoom(t *testing.T) {
 // sytest: PUT /rooms/:room_id/send/:event_type/:txn_id sends a message
 // sytest: PUT /rooms/:room_id/send/:event_type/:txn_id deduplicates the same txn id
 func TestSendMessageWithTxn(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{})
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{})
 
 	const txnID = "lorem"
 
-	res := alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message", txnID}, client.WithJSONBody(t, map[string]interface{}{
+	res := alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message", txnID}, client.WithJSONBody(t, map[string]interface{}{
 		"msgtype": "m.text",
 		"body":    "test",
 	}))
 	eventID := client.GetJSONFieldStr(t, client.ParseJSON(t, res), "event_id")
 
-	res = alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message", txnID}, client.WithJSONBody(t, map[string]interface{}{
+	res = alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "rooms", roomID, "send", "m.room.message", txnID}, client.WithJSONBody(t, map[string]interface{}{
 		"msgtype": "m.text",
 		"body":    "test",
 	}))
@@ -107,37 +109,16 @@ func TestSendMessageWithTxn(t *testing.T) {
 }
 
 func TestRoomMessagesLazyLoading(t *testing.T) {
-	deployment := Deploy(t, b.MustValidate(b.Blueprint{
-		Name: "alice_bob_and_charlie",
-		Homeservers: []b.Homeserver{
-			{
-				Name: "hs1",
-				Users: []b.User{
-					{
-						Localpart:   "@alice",
-						DisplayName: "Alice",
-					},
-					{
-						Localpart:   "@bob",
-						DisplayName: "Bob",
-					},
-					{
-						Localpart:   "@charlie",
-						DisplayName: "Charlie",
-					},
-				},
-			},
-		},
-	}))
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	charlie := deployment.Client(t, "hs1", "@charlie:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	charlie := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{"preset": "public_chat"})
-	bob.JoinRoom(t, roomID, nil)
-	charlie.JoinRoom(t, roomID, nil)
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{"preset": "public_chat"})
+	bob.MustJoinRoom(t, roomID, nil)
+	charlie.MustJoinRoom(t, roomID, nil)
 
 	bob.SendEventSynced(t, roomID, b.Event{
 		Type: "m.room.message",
@@ -166,7 +147,7 @@ func TestRoomMessagesLazyLoading(t *testing.T) {
 	queryParams.Set("filter", `{ "lazy_load_members" : true }`)
 	queryParams.Set("from", beforeToken)
 	queryParams.Set("to", afterToken)
-	res := alice.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
+	res := alice.Do(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
 	must.MatchResponse(t, res, match.HTTPResponse{
 		StatusCode: http.StatusOK,
 		JSON: []match.JSON{
@@ -189,19 +170,21 @@ func TestRoomMessagesLazyLoading(t *testing.T) {
 }
 
 // TODO We should probably see if this should be removed.
-//  Sytest tests for a very specific bug; check if local user member event loads properly when going backwards from a prev_event.
-//  However, note that the sytest *only* checks for the *local, single* user in a room to be included in `/messages`.
-//  This function exists here for sytest exhaustiveness, but I question its usefulness, thats why TestRoomMessagesLazyLoading
-//  exists to do a more generic check.
-//  We should probably see if this should be removed.
+//
+//	Sytest tests for a very specific bug; check if local user member event loads properly when going backwards from a prev_event.
+//	However, note that the sytest *only* checks for the *local, single* user in a room to be included in `/messages`.
+//	This function exists here for sytest exhaustiveness, but I question its usefulness, thats why TestRoomMessagesLazyLoading
+//	exists to do a more generic check.
+//	We should probably see if this should be removed.
+//
 // sytest: GET /rooms/:room_id/messages lazy loads members correctly
 func TestRoomMessagesLazyLoadingLocalUser(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{})
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{})
 
 	token := alice.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(alice.UserID, roomID))
 
@@ -217,7 +200,7 @@ func TestRoomMessagesLazyLoadingLocalUser(t *testing.T) {
 	queryParams.Set("dir", "b")
 	queryParams.Set("filter", `{ "lazy_load_members" : true }`)
 	queryParams.Set("from", token)
-	res := alice.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
+	res := alice.Do(t, "GET", []string{"_matrix", "client", "v3", "rooms", roomID, "messages"}, client.WithQueries(queryParams))
 	must.MatchResponse(t, res, match.HTTPResponse{
 		StatusCode: http.StatusOK,
 		JSON: []match.JSON{

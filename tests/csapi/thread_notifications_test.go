@@ -6,8 +6,10 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
 	"github.com/matrix-org/complement/runtime"
 )
 
@@ -71,15 +73,15 @@ func syncHasThreadedReadReceipt(roomID, userID, eventID, threadID string) client
 // Notification counts and receipts are handled by bob.
 func TestThreadedReceipts(t *testing.T) {
 	runtime.SkipIf(t, runtime.Dendrite) // not supported
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
 	// Create a room with alice and bob.
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	roomID := alice.CreateRoom(t, map[string]interface{}{"preset": "public_chat"})
-	bob.JoinRoom(t, roomID, nil)
+	roomID := alice.MustCreateRoom(t, map[string]interface{}{"preset": "public_chat"})
+	bob.MustJoinRoom(t, roomID, nil)
 
 	// A next batch token which is past the initial room creation.
 	bobNextBatch := bob.MustSyncUntil(t, client.SyncReq{}, client.SyncJoinedTo(bob.UserID, roomID))
@@ -194,7 +196,7 @@ func TestThreadedReceipts(t *testing.T) {
 	// Mark the first event as read with a threaded receipt. This causes only the
 	// notification from that event to be marked as read and only impacts the main
 	// timeline.
-	bob.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventA}, client.WithJSONBody(t, map[string]interface{}{"thread_id": "main"}))
+	bob.MustDo(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventA}, client.WithJSONBody(t, map[string]interface{}{"thread_id": "main"}))
 	bob.MustSyncUntil(
 		t, client.SyncReq{Since: bobNextBatch},
 		client.SyncTimelineHas(roomID, func(r gjson.Result) bool {
@@ -221,7 +223,7 @@ func TestThreadedReceipts(t *testing.T) {
 
 	// Mark the first thread event as read. This causes only the notification from
 	// that event to be marked as read and only impacts the thread timeline.
-	bob.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventB}, client.WithJSONBody(t, map[string]interface{}{"thread_id": eventA}))
+	bob.MustDo(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventB}, client.WithJSONBody(t, map[string]interface{}{"thread_id": eventA}))
 	bob.MustSyncUntil(
 		t, client.SyncReq{Since: bobNextBatch},
 		client.SyncTimelineHas(roomID, func(r gjson.Result) bool {
@@ -249,7 +251,7 @@ func TestThreadedReceipts(t *testing.T) {
 	)
 
 	// Use an unthreaded receipt to mark the second thread event and an unthreaded event as read.
-	bob.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventD}, client.WithJSONBody(t, struct{}{}))
+	bob.MustDo(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventD}, client.WithJSONBody(t, struct{}{}))
 	bob.MustSyncUntil(
 		t, client.SyncReq{Since: bobNextBatch},
 		client.SyncTimelineHas(roomID, func(r gjson.Result) bool {
@@ -277,7 +279,7 @@ func TestThreadedReceipts(t *testing.T) {
 	// Finally, mark the entire thread as read, using the annotation.
 	//
 	// Note that this will *not* affect the main timeline.
-	bob.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventG}, client.WithJSONBody(t, map[string]interface{}{"thread_id": eventA}))
+	bob.MustDo(t, "POST", []string{"_matrix", "client", "v3", "rooms", roomID, "receipt", "m.read", eventG}, client.WithJSONBody(t, map[string]interface{}{"thread_id": eventA}))
 	bob.MustSyncUntil(
 		t, client.SyncReq{Since: bobNextBatch},
 		client.SyncTimelineHas(roomID, func(r gjson.Result) bool {

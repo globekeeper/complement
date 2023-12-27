@@ -6,20 +6,23 @@ package csapi_tests
 import (
 	"testing"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 
 	"github.com/tidwall/gjson"
 )
 
 func TestChangePasswordPushers(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 	password1 := "superuser"
 	password2 := "my_new_password"
-	passwordClient := deployment.RegisterUser(t, "hs1", "test_change_password_pusher_user", password1, false)
+	passwordClient := deployment.Register(t, "hs1", helpers.RegistrationOpts{
+		Password: password1,
+	})
 
 	// sytest: Pushers created with a different access token are deleted on password change
 	t.Run("Pushers created with a different access token are deleted on password change", func(t *testing.T) {
@@ -37,13 +40,13 @@ func TestChangePasswordPushers(t *testing.T) {
 			"lang":                "en",
 		})
 
-		_ = sessionOptional.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "pushers", "set"}, reqBody)
+		_ = sessionOptional.MustDo(t, "POST", []string{"_matrix", "client", "v3", "pushers", "set"}, reqBody)
 
 		changePassword(t, passwordClient, password1, password2)
 
 		pushersSize := 0
 
-		res := passwordClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "pushers"})
+		res := passwordClient.Do(t, "GET", []string{"_matrix", "client", "v3", "pushers"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 			JSON: []match.JSON{
@@ -59,7 +62,7 @@ func TestChangePasswordPushers(t *testing.T) {
 	})
 
 	// sytest: Pushers created with a the same access token are not deleted on password change
-	t.Run("Pushers created with a the same access token are not deleted on password change", func(t *testing.T) {
+	t.Run("Pushers created with the same access token are not deleted on password change", func(t *testing.T) {
 		reqBody := client.WithJSONBody(t, map[string]interface{}{
 			"data": map[string]interface{}{
 				"url": "https://dummy.url/_matrix/push/v1/notify",
@@ -73,13 +76,13 @@ func TestChangePasswordPushers(t *testing.T) {
 			"lang":                "en",
 		})
 
-		_ = passwordClient.MustDoFunc(t, "POST", []string{"_matrix", "client", "v3", "pushers", "set"}, reqBody)
+		_ = passwordClient.MustDo(t, "POST", []string{"_matrix", "client", "v3", "pushers", "set"}, reqBody)
 
 		changePassword(t, passwordClient, password2, password1)
 
 		pushersSize := 0
 
-		res := passwordClient.DoFunc(t, "GET", []string{"_matrix", "client", "v3", "pushers"})
+		res := passwordClient.Do(t, "GET", []string{"_matrix", "client", "v3", "pushers"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			StatusCode: 200,
 			JSON: []match.JSON{

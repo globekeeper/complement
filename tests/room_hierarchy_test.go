@@ -20,10 +20,12 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/b"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 var (
@@ -53,16 +55,19 @@ func roomToChildrenMapper(r gjson.Result) interface{} {
 }
 
 // Tests that the CS API for MSC2946 works correctly. Creates a space directory like:
-//     Root
-//      |
+//
+//	Root
+//	 |
+//
 // _____|________
 // |    |       |
 // R1  SS1      R2
-//      |       |
-//     SS2      R5
-//      |________
-//      |       |
-//      R3      R4
+//
+//	 |       |
+//	SS2      R5
+//	 |________
+//	 |       |
+//	 R3      R4
 //
 // Where:
 // - the user is joined to all rooms except R4.
@@ -78,14 +83,14 @@ func roomToChildrenMapper(r gjson.Result) interface{} {
 // - Events are returned correctly.
 // - Redacting links works correctly.
 func TestClientSpacesSummary(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
 	roomNames := make(map[string]string)
 
 	// create the rooms
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	root := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	root := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "Root",
 		"creation_content": map[string]interface{}{
@@ -93,12 +98,12 @@ func TestClientSpacesSummary(t *testing.T) {
 		},
 	})
 	roomNames[root] = "Root"
-	r1 := alice.CreateRoom(t, map[string]interface{}{
+	r1 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R1",
 	})
 	roomNames[r1] = "R1"
-	ss1 := alice.CreateRoom(t, map[string]interface{}{
+	ss1 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "Sub-Space 1",
 		"topic":  "Some topic for sub-space 1",
@@ -107,12 +112,12 @@ func TestClientSpacesSummary(t *testing.T) {
 		},
 	})
 	roomNames[ss1] = "Sub-Space 1"
-	r2 := alice.CreateRoom(t, map[string]interface{}{
+	r2 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R2",
 	})
 	roomNames[r2] = "R2"
-	ss2 := alice.CreateRoom(t, map[string]interface{}{
+	ss2 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "SS2",
 		"creation_content": map[string]interface{}{
@@ -120,14 +125,14 @@ func TestClientSpacesSummary(t *testing.T) {
 		},
 	})
 	roomNames[ss2] = "SS2"
-	r3 := alice.CreateRoom(t, map[string]interface{}{
+	r3 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R3",
 	})
 	roomNames[r3] = "R3"
 	// alice is not joined to R4
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	r4 := bob.CreateRoom(t, map[string]interface{}{
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	r4 := bob.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R4",
 		"initial_state": []map[string]interface{}{
@@ -141,7 +146,7 @@ func TestClientSpacesSummary(t *testing.T) {
 		},
 	})
 	roomNames[r4] = "R4"
-	r5 := bob.CreateRoom(t, map[string]interface{}{
+	r5 := bob.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R5",
 	})
@@ -219,7 +224,7 @@ func TestClientSpacesSummary(t *testing.T) {
 	// - Rooms are returned correctly along with the custom fields `room_type`.
 	// - Events are returned correctly.
 	t.Run("query whole graph", func(t *testing.T) {
-		res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+		res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			JSON: []match.JSON{
 				match.JSONCheckOff("rooms", []interface{}{
@@ -257,7 +262,7 @@ func TestClientSpacesSummary(t *testing.T) {
 		// Should only include R1, SS1, and R2.
 		query := make(url.Values, 1)
 		query.Set("max_depth", "1")
-		res := alice.MustDoFunc(
+		res := alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v1", "rooms", root, "hierarchy"},
@@ -283,7 +288,7 @@ func TestClientSpacesSummary(t *testing.T) {
 		// Should only include R1, SS1, and R2.
 		query := make(url.Values, 1)
 		query.Set("suggested_only", "true")
-		res := alice.MustDoFunc(
+		res := alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v1", "rooms", root, "hierarchy"},
@@ -309,7 +314,7 @@ func TestClientSpacesSummary(t *testing.T) {
 		// The initial page should only include Root, R1, SS1, and SS2.
 		query := make(url.Values, 1)
 		query.Set("limit", "4")
-		res := alice.MustDoFunc(
+		res := alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v1", "rooms", root, "hierarchy"},
@@ -328,7 +333,7 @@ func TestClientSpacesSummary(t *testing.T) {
 		// The following page should include R3, R4, and R2.
 		query = make(url.Values, 1)
 		query.Set("from", client.GetJSONFieldStr(t, body, "next_batch"))
-		res = alice.MustDoFunc(
+		res = alice.MustDo(
 			t,
 			"GET",
 			[]string{"_matrix", "client", "v1", "rooms", root, "hierarchy"},
@@ -352,7 +357,7 @@ func TestClientSpacesSummary(t *testing.T) {
 			StateKey: &ss1,
 			Content:  map[string]interface{}{},
 		})
-		res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+		res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 		must.MatchResponse(t, res, match.HTTPResponse{
 			JSON: []match.JSON{
 				match.JSONCheckOff("rooms", []interface{}{
@@ -369,14 +374,17 @@ func TestClientSpacesSummary(t *testing.T) {
 }
 
 // Tests that the CS API for MSC2946 correctly handles join rules. Creates a space directory like:
-//     Root
-//      |
+//
+//	Root
+//	 |
+//
 // _____|
 // |    |
 // R1  SS1
-//      |________
-//      |       |
-//      R2      R3
+//
+//	|________
+//	|       |
+//	R2      R3
 //
 // Where:
 // - All rooms and spaces are invite-only, except R2 (which is public)
@@ -385,30 +393,30 @@ func TestClientSpacesSummary(t *testing.T) {
 // Tests that:
 // - Rooms/spaces the user is not invited to should not appear.
 func TestClientSpacesSummaryJoinRules(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintOneToOneRoom)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
 	// create the rooms
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	root := alice.CreateRoom(t, map[string]interface{}{
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	root := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "Root",
 		"creation_content": map[string]interface{}{
 			"type": "m.space",
 		},
 	})
-	r1 := alice.CreateRoom(t, map[string]interface{}{
+	r1 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "private_chat",
 		"name":   "R1",
 	})
-	ss1 := alice.CreateRoom(t, map[string]interface{}{
+	ss1 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "private_chat",
 		"name":   "Sub-Space 1",
 		"creation_content": map[string]interface{}{
 			"type": "m.space",
 		},
 	})
-	r2 := alice.CreateRoom(t, map[string]interface{}{
+	r2 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "public_chat",
 		"name":   "R2",
 		"initial_state": []map[string]interface{}{
@@ -421,7 +429,7 @@ func TestClientSpacesSummaryJoinRules(t *testing.T) {
 			},
 		},
 	})
-	r3 := alice.CreateRoom(t, map[string]interface{}{
+	r3 := alice.MustCreateRoom(t, map[string]interface{}{
 		"preset": "private_chat",
 		"name":   "R3",
 	})
@@ -461,10 +469,10 @@ func TestClientSpacesSummaryJoinRules(t *testing.T) {
 	})
 
 	// Querying is done by bob who is not yet in any of the rooms.
-	bob := deployment.Client(t, "hs1", "@bob:hs1")
-	bob.JoinRoom(t, root, []string{"hs1"})
+	bob := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	bob.MustJoinRoom(t, root, []string{"hs1"})
 
-	res := bob.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+	res := bob.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 	must.MatchResponse(t, res, match.HTTPResponse{
 		JSON: []match.JSON{
 			match.JSONCheckOff("rooms", []interface{}{
@@ -479,10 +487,10 @@ func TestClientSpacesSummaryJoinRules(t *testing.T) {
 	})
 
 	// Invite to R1 and R3, querying again should only show R1 (since SS1 is not visible).
-	alice.InviteRoom(t, r1, bob.UserID)
-	alice.InviteRoom(t, r3, bob.UserID)
+	alice.MustInviteRoom(t, r1, bob.UserID)
+	alice.MustInviteRoom(t, r3, bob.UserID)
 
-	res = bob.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+	res = bob.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 	must.MatchResponse(t, res, match.HTTPResponse{
 		JSON: []match.JSON{
 			match.JSONCheckOff("rooms", []interface{}{
@@ -497,9 +505,9 @@ func TestClientSpacesSummaryJoinRules(t *testing.T) {
 	})
 
 	// Invite to SS1 and it now appears, as well as the rooms under it.
-	alice.InviteRoom(t, ss1, bob.UserID)
+	alice.MustInviteRoom(t, ss1, bob.UserID)
 
-	res = bob.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+	res = bob.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 	must.MatchResponse(t, res, match.HTTPResponse{
 		JSON: []match.JSON{
 			match.JSONCheckOff("rooms", []interface{}{
@@ -515,22 +523,25 @@ func TestClientSpacesSummaryJoinRules(t *testing.T) {
 }
 
 // Tests that MSC2946 works over federation. Creates a space directory like:
-//     ROOT
-//      |
+//
+//	ROOT
+//	 |
+//
 // _____|________
 // |    |       |
 // R1  SS1      r2
-//      |________
-//      |        |
-//     ss2      r3
-//      |
-//      R4
+//
+//	 |________
+//	 |        |
+//	ss2      r3
+//	 |
+//	 R4
 //
 // Where R/SS = on hs1, and r/ss = on hs2. Links are space children state events only.
 // Tests that:
 // - Querying from root returns the entire graph
 func TestFederatedClientSpaces(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintFederationOneToOneRoom)
+	deployment := complement.Deploy(t, 2)
 	defer deployment.Destroy(t)
 
 	worldReadable := map[string]interface{}{
@@ -561,15 +572,15 @@ func TestFederatedClientSpaces(t *testing.T) {
 		},
 	}
 	// create the rooms
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
-	root := alice.CreateRoom(t, worldReadableSpace)
-	r1 := alice.CreateRoom(t, worldReadable)
-	ss1 := alice.CreateRoom(t, worldReadableSpace)
-	r4 := alice.CreateRoom(t, worldReadable)
-	bob := deployment.Client(t, "hs2", "@bob:hs2")
-	r2 := bob.CreateRoom(t, worldReadable)
-	ss2 := bob.CreateRoom(t, worldReadableSpace)
-	r3 := bob.CreateRoom(t, worldReadable)
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
+	root := alice.MustCreateRoom(t, worldReadableSpace)
+	r1 := alice.MustCreateRoom(t, worldReadable)
+	ss1 := alice.MustCreateRoom(t, worldReadableSpace)
+	r4 := alice.MustCreateRoom(t, worldReadable)
+	bob := deployment.Register(t, "hs2", helpers.RegistrationOpts{})
+	r2 := bob.MustCreateRoom(t, worldReadable)
+	ss2 := bob.MustCreateRoom(t, worldReadableSpace)
+	r3 := bob.MustCreateRoom(t, worldReadable)
 
 	// create the links
 	rootToR1 := eventKey(root, r1, spaceChildEventType)
@@ -627,7 +638,7 @@ func TestFederatedClientSpaces(t *testing.T) {
 	}
 	t.Logf("rooms: %v", allEvents)
 
-	res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
+	res := alice.MustDo(t, "GET", []string{"_matrix", "client", "v1", "rooms", root, "hierarchy"})
 	must.MatchResponse(t, res, match.HTTPResponse{
 		JSON: []match.JSON{
 			match.JSONCheckOff("rooms", []interface{}{

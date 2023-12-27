@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/matrix-org/complement/internal/b"
+	"github.com/matrix-org/complement/b"
 	"github.com/matrix-org/complement/internal/docker"
 	"github.com/matrix-org/complement/internal/instruction"
 )
@@ -34,7 +34,7 @@ func runTest(testName string, builder *docker.Builder, deployer *docker.Deployer
 	if err != nil {
 		return nil, err
 	}
-	defer deployment.Deployer.Destroy(deployment, false)
+	defer deployment.Deployer.Destroy(deployment, false, testName, false)
 
 	snapshots := snapshotStats("startup", "clean homeserver with no users", deployment, 0, 0)
 	runner := instruction.NewRunner(testName, false, true)

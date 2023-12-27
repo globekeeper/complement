@@ -7,46 +7,37 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"github.com/matrix-org/complement/internal/b"
-	"github.com/matrix-org/complement/internal/client"
-	"github.com/matrix-org/complement/internal/match"
-	"github.com/matrix-org/complement/internal/must"
+	"github.com/matrix-org/complement"
+	"github.com/matrix-org/complement/client"
+	"github.com/matrix-org/complement/helpers"
+	"github.com/matrix-org/complement/match"
+	"github.com/matrix-org/complement/must"
 )
 
 // sytest: Getting push rules doesn't corrupt the cache SYN-390
 func TestPushRuleCacheHealth(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
-	alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "sender", alice.UserID}, client.WithJSONBody(t, map[string]interface{}{
+	// Set a global push rule
+	alice.SetPushRule(t, "global", "sender", alice.UserID, map[string]interface{}{
 		"actions": []string{"dont_notify"},
-	}))
+	}, "", "")
 
-	// the extra "" is to make sure the submitted URL ends with a trailing slash
-	res := alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "pushrules", ""})
+	// Fetch the rule once and check its contents
+	must.MatchGJSON(t, alice.GetAllPushRules(t), match.JSONKeyEqual("global.sender.0.actions.0", "dont_notify"))
 
-	must.MatchResponse(t, res, match.HTTPResponse{
-		JSON: []match.JSON{
-			match.JSONKeyEqual("global.sender.0.actions.0", "dont_notify"),
-		},
-	})
-
-	res = alice.MustDoFunc(t, "GET", []string{"_matrix", "client", "v3", "pushrules", ""})
-
-	must.MatchResponse(t, res, match.HTTPResponse{
-		JSON: []match.JSON{
-			match.JSONKeyEqual("global.sender.0.actions.0", "dont_notify"),
-		},
-	})
+	// Fetch the rule and check its contents again. It should not have changed.
+	must.MatchGJSON(t, alice.GetAllPushRules(t), match.JSONKeyEqual("global.sender.0.actions.0", "dont_notify"))
 }
 
 func TestPushSync(t *testing.T) {
-	deployment := Deploy(t, b.BlueprintAlice)
+	deployment := complement.Deploy(t, 1)
 	defer deployment.Destroy(t)
 
-	alice := deployment.Client(t, "hs1", "@alice:hs1")
+	alice := deployment.Register(t, "hs1", helpers.RegistrationOpts{})
 
 	var syncResp gjson.Result
 	var nextBatch string
@@ -68,7 +59,7 @@ func TestPushSync(t *testing.T) {
 				"actions": []string{"notify"},
 			})
 
-			alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com"}, body)
+			alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com"}, body)
 		})
 	})
 
@@ -79,7 +70,7 @@ func TestPushSync(t *testing.T) {
 				"enabled": false,
 			})
 
-			alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "enabled"}, body)
+			alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "enabled"}, body)
 		})
 	})
 
@@ -90,7 +81,7 @@ func TestPushSync(t *testing.T) {
 				"enabled": true,
 			})
 
-			alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "enabled"}, body)
+			alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "enabled"}, body)
 		})
 	})
 
@@ -101,7 +92,7 @@ func TestPushSync(t *testing.T) {
 				"actions": []string{"dont_notify"},
 			})
 
-			alice.MustDoFunc(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "actions"}, body)
+			alice.MustDo(t, "PUT", []string{"_matrix", "client", "v3", "pushrules", "global", "room", "!foo:example.com", "actions"}, body)
 		})
 	})
 }
@@ -111,6 +102,9 @@ func checkWokenUp(t *testing.T, csapi *client.CSAPI, syncReq client.SyncReq, fn 
 	errChan := make(chan error, 1)
 	syncStarted := make(chan struct{})
 	go func() {
+		defer close(errChan)
+		defer close(syncStarted)
+
 		var syncResp gjson.Result
 		syncStarted <- struct{}{}
 		syncResp, nextBatch = csapi.MustSync(t, syncReq)
@@ -142,7 +136,5 @@ func checkWokenUp(t *testing.T, csapi *client.CSAPI, syncReq client.SyncReq, fn 
 		t.Errorf("sync failed to return")
 	}
 
-	close(errChan)
-	close(syncStarted)
 	return nextBatch
 }
